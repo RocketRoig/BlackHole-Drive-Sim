@@ -1,4 +1,4 @@
-# BackHole-Drive
+# BlackHole-Drive
 The following game simulates a ship orbiting aroud the inner solar system using a blackhole drive
 
 The ship uses a blackhole drive, it takes profit Hawking radiation of the balckhole to create two beams that can be used as thrust. 

@@ -1,6 +1,7 @@
 import datetime as dt
 import math
 import random
+import ctypes
 from dataclasses import dataclass
 import pygame
 
@@ -10,7 +11,7 @@ G = 6.67430e-11
 C = 299_792_458
 G0 = 9.80665
 AU = 1.496e11
-TIME_STEPS = [1.0, 10.0, 100.0, 10_000.0, 1_000_000.0]
+TIME_STEPS = [1.0, 100.0, 1000.0, 10_000.0, 1_000_000.0]
 MAX_SHIP_TRAIL_POINTS = 2400
 ORBIT_SHAPE_SAMPLES = 220
 HAWKING_MASS_LOSS_MAX = 1_000_000.0  # kg/s saturation near end-of-life
@@ -169,6 +170,38 @@ def world_to_screen(world: pygame.Vector2, camera: pygame.Vector2, scale: float)
     return CENTER + pygame.Vector2(shifted.x, -shifted.y)
 
 
+def set_viewport(width: int, height: int):
+    global WIDTH, HEIGHT, CENTER
+    WIDTH = max(1, int(width))
+    HEIGHT = max(1, int(height))
+    CENTER = pygame.Vector2(WIDTH / 2, HEIGHT / 2)
+
+
+def get_initial_window_size() -> tuple[int, int]:
+    # Use the OS work area on Windows so taskbar/top bar stay visible.
+    try:
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        rect = RECT()
+        SPI_GETWORKAREA = 0x0030
+        if ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
+            work_w = rect.right - rect.left
+            work_h = rect.bottom - rect.top
+            margin = 24
+            return max(960, work_w - margin), max(600, work_h - margin)
+    except Exception:
+        pass
+
+    display_info = pygame.display.Info()
+    return max(960, int(display_info.current_w * 0.92)), max(600, int(display_info.current_h * 0.9))
+
+
 def draw_glow(screen: pygame.Surface, pos: pygame.Vector2, power: float):
     # visually proportional to radiation level relative to nominal power
     ratio = max(power / P0, 1e-4)
@@ -229,7 +262,9 @@ def draw_orbit_paths(screen: pygame.Surface, bodies: list[StellarBody], camera: 
 
 def main():
     pygame.init()
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    init_w, init_h = get_initial_window_size()
+    set_viewport(init_w, init_h)
+    screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
     pygame.display.set_caption("Blackhole Drive Solar Navigator")
     font = pygame.font.SysFont("consolas", 18)
     clock = pygame.time.Clock()
@@ -243,9 +278,7 @@ def main():
     debris_pos = None
     ship_trail: list[pygame.Vector2] = []
 
-    hour_box = pygame.Rect(20, HEIGHT - 54, 140, 34)
-    forward_btn = pygame.Rect(170, HEIGHT - 54, 120, 34)
-    hour_input = "24"
+    hour_input = "8760"
     hour_input_active = False
     jump_seconds_remaining = 0.0
     jump_duration_real = 5.0
@@ -257,13 +290,16 @@ def main():
     shockwave_age = 0.0
     bh_free_pos = ship.pos.copy()
     bh_free_vel = ship.vel.copy()
-    reset_btn = pygame.Rect(300, HEIGHT - 54, 150, 34)
     follow_camera = True
     dragging_view = False
     score_time = 0.0
 
     running = True
     while running:
+        hour_box = pygame.Rect(20, HEIGHT - 54, 140, 34)
+        forward_btn = pygame.Rect(170, HEIGHT - 54, 120, 34)
+        reset_btn = pygame.Rect(300, HEIGHT - 54, 150, 34)
+
         dt_real = clock.tick(60) / 1000.0
         dt_seconds = dt_real * TIME_STEPS[sim_speed_idx]
         if jump_seconds_remaining > 0:
@@ -280,6 +316,9 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.VIDEORESIZE:
+                set_viewport(event.w, event.h)
+                screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:
                     hour_input_active = hour_box.collidepoint(event.pos)
@@ -302,7 +341,7 @@ def main():
                         sim_time_days = 0.0
                         debris_pos = None
                         ship_trail = []
-                        hour_input = "24"
+                        hour_input = "8760"
                         hour_input_active = False
                         jump_seconds_remaining = 0.0
                         jump_rate_seconds_per_real = 0.0
@@ -345,9 +384,9 @@ def main():
                     if jump_seconds_remaining > 0:
                         alert_timer = 1.8
                         alert_text = "Cannot toggle thrust during forward-jump."
-                    elif TIME_STEPS[sim_speed_idx] > 100:
+                    elif TIME_STEPS[sim_speed_idx] > 1000:
                         alert_timer = 1.8
-                        alert_text = "Slow down to x100 or lower to enable thrust."
+                        alert_text = "Slow down to x1000 or lower to enable thrust."
                     else:
                         ship.aligned_for_thrust = not ship.aligned_for_thrust
                 elif event.key == pygame.K_y:
@@ -378,11 +417,11 @@ def main():
             ship.blackhole.feed_massflow = 0.0
             alert_timer = 1.5
             alert_text = "Thrust/feed disabled during forward-jump."
-        if TIME_STEPS[sim_speed_idx] > 100 and (ship.aligned_for_thrust or ship.blackhole.feed_massflow > 0):
+        if TIME_STEPS[sim_speed_idx] > 1000 and (ship.aligned_for_thrust or ship.blackhole.feed_massflow > 0):
             ship.aligned_for_thrust = False
             ship.blackhole.feed_massflow = 0.0
             alert_timer = 1.8
-            alert_text = "Thrust/feed disabled above x100. Slow down time to use propulsion."
+            alert_text = "Thrust/feed disabled above x1000. Slow down time to use propulsion."
         if alert_timer > 0:
             alert_timer = max(0.0, alert_timer - dt_real)
         if not ship.destroyed:
@@ -390,7 +429,7 @@ def main():
                 ship.heading += 0.9 * dt_seconds
             if keys[pygame.K_d]:
                 ship.heading -= 0.9 * dt_seconds
-            if TIME_STEPS[sim_speed_idx] <= 100 and jump_seconds_remaining <= 0:
+            if TIME_STEPS[sim_speed_idx] <= 1000 and jump_seconds_remaining <= 0:
                 if keys[pygame.K_w]:
                     ship.blackhole.feed_massflow = min(100.0, ship.blackhole.feed_massflow + 20 * dt_seconds)
                 if keys[pygame.K_s]:
@@ -516,7 +555,7 @@ def main():
 
         hud = [
             "A/D rotate W/S massflow SPACE beam C harvest",
-            "Time speeds Y/U/I/O/P => 1x,10x,100x,10000x,1000000x",
+            "Time speeds Y/U/I/O/P => 1x,100x,1000x,10000x,1000000x",
             f"Speed: x{TIME_STEPS[sim_speed_idx]:.0f}  Jump left: {jump_seconds_remaining/3600:.2f} h",
             f"Cargo: {ship.cargo_mass:,.1f} kg  Feed: {ship.blackhole.feed_massflow:,.1f} kg/s",
             f"Acceleration: {ship_acc_g:,.3f} g",
